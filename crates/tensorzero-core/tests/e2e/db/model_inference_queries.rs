@@ -224,6 +224,7 @@ async fn test_insert_and_read_model_inference(conn: impl ModelInferenceQueries) 
         cost: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None, // Computed from UUID on insert
     };
 
@@ -303,6 +304,7 @@ async fn test_insert_and_read_model_inference_zero_cache_tokens(conn: impl Model
         cost: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -357,6 +359,7 @@ async fn test_insert_multiple_model_inferences_for_same_inference(
             cost: None,
             finish_reason: None, // Failed, no finish reason
             snapshot_hash: None,
+            api_key_public_id: None,
             timestamp: None,
         },
         StoredModelInference {
@@ -379,6 +382,7 @@ async fn test_insert_multiple_model_inferences_for_same_inference(
             cost: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
+            api_key_public_id: None,
             timestamp: None,
         },
     ];
@@ -445,6 +449,7 @@ async fn test_insert_model_inference_with_all_finish_reasons(conn: impl ModelInf
             cost: None,
             finish_reason: Some(finish_reason),
             snapshot_hash: None,
+            api_key_public_id: None,
             timestamp: None,
         };
 
@@ -489,6 +494,7 @@ async fn test_insert_model_inference_with_null_finish_reason(conn: impl ModelInf
         cost: None,
         finish_reason: None,
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -532,6 +538,7 @@ async fn test_insert_model_inference_cached_flag(conn: impl ModelInferenceQuerie
         cost: None,
         finish_reason: None,
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -569,6 +576,7 @@ async fn test_insert_model_inference_cached_flag(conn: impl ModelInferenceQuerie
         cost: None,
         finish_reason: None,
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -614,6 +622,7 @@ async fn test_insert_model_inference_cost_non_cached(conn: impl ModelInferenceQu
         cost: Some(Decimal::new(18, 5)), // 0.00018
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -661,6 +670,7 @@ async fn test_insert_model_inference_cost_cached(conn: impl ModelInferenceQuerie
         cost: Some(Decimal::ZERO),
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -705,6 +715,7 @@ async fn test_insert_model_inference_cost_null(conn: impl ModelInferenceQueries)
         cost: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -750,6 +761,7 @@ async fn test_insert_model_inference_cost_high_precision(conn: impl ModelInferen
         cost: Some(cost),
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     };
 

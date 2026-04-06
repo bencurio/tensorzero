@@ -51,6 +51,7 @@ fn make_chat_inference(function_name: &str) -> ChatInferenceDatabaseInsert {
         tags: HashMap::new(),
         extra_body: Some(UnfilteredInferenceExtraBody::default()),
         snapshot_hash: None,
+        api_key_public_id: None,
     }
 }
 
@@ -73,6 +74,7 @@ fn make_json_inference(function_name: &str) -> JsonInferenceDatabaseInsert {
         tags: HashMap::new(),
         extra_body: Some(UnfilteredInferenceExtraBody::default()),
         snapshot_hash: None,
+        api_key_public_id: None,
     }
 }
 
@@ -97,6 +99,7 @@ fn make_model_inference(inference_id: Uuid) -> StoredModelInference {
         provider_cache_write_input_tokens: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
+        api_key_public_id: None,
         timestamp: None,
     }
 }

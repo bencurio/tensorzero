@@ -631,6 +631,7 @@ async fn run_migration_0048_with_data<R: Future<Output = bool>, F: FnOnce() -> R
         provider_cache_write_input_tokens: None,
         finish_reason: None,
         snapshot_hash: Some(SnapshotHash::new_test()),
+        api_key_public_id: None,
         timestamp: None,
     };
     let row2 = StoredModelInference {
@@ -653,6 +654,7 @@ async fn run_migration_0048_with_data<R: Future<Output = bool>, F: FnOnce() -> R
         provider_cache_write_input_tokens: None,
         finish_reason: None,
         snapshot_hash: Some(SnapshotHash::new_test()),
+        api_key_public_id: None,
         timestamp: None,
     };
 
@@ -725,6 +727,7 @@ async fn run_migration_0052_with_data<R: Future<Output = bool>, F: FnOnce() -> R
             cost: Some(cost1),
             finish_reason: None,
             snapshot_hash: Some(SnapshotHash::new_test()),
+            api_key_public_id: None,
             timestamp: None,
         },
         StoredModelInference {
@@ -747,6 +750,7 @@ async fn run_migration_0052_with_data<R: Future<Output = bool>, F: FnOnce() -> R
             cost: Some(cost2),
             finish_reason: None,
             snapshot_hash: Some(SnapshotHash::new_test()),
+            api_key_public_id: None,
             timestamp: None,
         },
         StoredModelInference {
@@ -769,6 +773,7 @@ async fn run_migration_0052_with_data<R: Future<Output = bool>, F: FnOnce() -> R
             cost: None,
             finish_reason: None,
             snapshot_hash: Some(SnapshotHash::new_test()),
+            api_key_public_id: None,
             timestamp: None,
         },
     ];
@@ -880,7 +885,7 @@ invoke_all_separate_tests!(
     test_rollback_up_to_migration_index_,
     [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45
+        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46
     ]
 );
 
@@ -1199,6 +1204,7 @@ async fn test_clickhouse_migration_manager() {
         provider_cache_write_input_tokens: None,
         finish_reason: None,
         snapshot_hash: Some(SnapshotHash::new_test()),
+        api_key_public_id: None,
         timestamp: None,
     };
     clickhouse

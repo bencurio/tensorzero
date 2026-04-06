@@ -1390,6 +1390,8 @@ pub struct ChatInferenceDatabaseInsert {
     pub extra_body: Option<UnfilteredInferenceExtraBody>,
     #[serde(default)]
     pub snapshot_hash: Option<SnapshotHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_public_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1416,6 +1418,8 @@ pub struct JsonInferenceDatabaseInsert {
     pub extra_body: Option<UnfilteredInferenceExtraBody>,
     #[serde(default)]
     pub snapshot_hash: Option<SnapshotHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_public_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1468,6 +1472,8 @@ pub struct StoredModelInference {
     pub cost: Option<Decimal>,
     pub finish_reason: Option<FinishReason>,
     pub snapshot_hash: Option<SnapshotHash>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_public_id: Option<String>,
     /// Materialized column in ClickHouse - only present when reading from the database.
     /// Ignored during insert (computed from `UUIDv7ToDateTime(id)`).
     #[serde(default, skip_serializing)]
@@ -1594,6 +1600,7 @@ impl StoredModelInference {
         result: ModelInferenceResponseWithMetadata,
         inference_id: Uuid,
         snapshot_hash: SnapshotHash,
+        api_key_public_id: Option<String>,
     ) -> Result<Self, Error> {
         let (latency_ms, ttft_ms) = match result.latency {
             Latency::Streaming {
@@ -1666,6 +1673,7 @@ impl StoredModelInference {
             finish_reason: result.finish_reason,
             input_messages: Some(stored_input_messages),
             snapshot_hash: Some(snapshot_hash),
+            api_key_public_id,
             // timestamp is a materialized column, not set during insert
             timestamp: None,
         })
@@ -1685,6 +1693,7 @@ impl InferenceResult {
     pub async fn get_model_inferences(
         &self,
         snapshot_hash: SnapshotHash,
+        api_key_public_id: Option<String>,
     ) -> Vec<StoredModelInference> {
         let model_inference_responses = self.model_inference_results();
         let inference_id = match self {
@@ -1693,8 +1702,16 @@ impl InferenceResult {
         };
         join_all(model_inference_responses.iter().map(|r| {
             let snapshot_hash = snapshot_hash.clone();
+            let api_key_public_id = api_key_public_id.clone();
             async move {
-                match StoredModelInference::new(r.clone(), inference_id, snapshot_hash).await {
+                match StoredModelInference::new(
+                    r.clone(),
+                    inference_id,
+                    snapshot_hash,
+                    api_key_public_id,
+                )
+                .await
+                {
                     Ok(model_inference) => Some(model_inference),
                     Err(e) => {
                         ErrorDetails::Serialization {
@@ -1884,6 +1901,7 @@ impl ChatInferenceDatabaseInsert {
             ttft_ms: metadata.ttft_ms,
             extra_body: Some(metadata.extra_body),
             snapshot_hash: Some(metadata.snapshot_hash),
+            api_key_public_id: metadata.api_key_public_id,
         }
     }
 }
@@ -1922,6 +1940,7 @@ impl JsonInferenceDatabaseInsert {
             extra_body: Some(metadata.extra_body),
             ttft_ms: metadata.ttft_ms,
             snapshot_hash: Some(metadata.snapshot_hash),
+            api_key_public_id: metadata.api_key_public_id,
         }
     }
 }

@@ -57,6 +57,7 @@ pub async fn test_render_samples_skips_none_input() {
         processing_time_ms: None,
         ttft_ms: None,
         snapshot_hash: None,
+        api_key_public_id: None,
     })];
 
     let rendered_inferences = client
@@ -104,6 +105,7 @@ pub async fn test_render_samples_no_function() {
         processing_time_ms: None,
         ttft_ms: None,
         snapshot_hash: None,
+        api_key_public_id: None,
     })];
 
     let rendered_inferences = client
@@ -145,6 +147,7 @@ pub async fn test_render_samples_no_variant() {
         processing_time_ms: None,
         ttft_ms: None,
         snapshot_hash: None,
+        api_key_public_id: None,
     })];
 
     let error = client
@@ -200,6 +203,7 @@ pub async fn test_render_samples_missing_variable() {
         processing_time_ms: None,
         ttft_ms: None,
         snapshot_hash: None,
+        api_key_public_id: None,
     })];
 
     let rendered_inferences = client
@@ -247,6 +251,7 @@ pub async fn test_render_samples_normal() {
             processing_time_ms: None,
             ttft_ms: None,
             snapshot_hash: None,
+            api_key_public_id: None,
         }),
         StoredInferenceDatabase::Json(StoredJsonInference {
             function_name: "json_success".to_string(),
@@ -285,6 +290,7 @@ pub async fn test_render_samples_normal() {
             processing_time_ms: None,
             ttft_ms: None,
             snapshot_hash: None,
+            api_key_public_id: None,
         }),
         StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
             function_name: "weather_helper".to_string(),
@@ -337,6 +343,7 @@ pub async fn test_render_samples_normal() {
             processing_time_ms: None,
             ttft_ms: None,
             snapshot_hash: None,
+            api_key_public_id: None,
         }),
         StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
             function_name: "basic_test".to_string(),
@@ -387,6 +394,7 @@ pub async fn test_render_samples_normal() {
             processing_time_ms: None,
             ttft_ms: None,
             snapshot_hash: None,
+            api_key_public_id: None,
         }),
     ];
 
@@ -586,6 +594,7 @@ pub async fn test_render_samples_template_no_schema() {
         processing_time_ms: None,
         ttft_ms: None,
         snapshot_hash: None,
+        api_key_public_id: None,
     })];
 
     let rendered_inferences = client
