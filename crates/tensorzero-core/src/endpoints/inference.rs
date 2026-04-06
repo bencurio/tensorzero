@@ -929,6 +929,7 @@ async fn infer_variant(args: InferVariantArgs<'_>) -> Result<InferenceOutput, Er
                 tool_config: tool_config.clone(),
                 processing_time: Some(start_time.elapsed()),
                 ttft_ms: None,
+                api_key_public_id: tags.get("tensorzero::api_key_public_id").cloned(),
                 tags: tags.clone(),
                 extra_body,
                 extra_headers,
@@ -1445,6 +1446,9 @@ fn create_stream(
                         episode_id,
                         tool_config,
                         processing_time: Some(start_time.elapsed()),
+                        api_key_public_id: tags
+                            .get("tensorzero::api_key_public_id")
+                            .cloned(),
                         tags,
                         ttft_ms: inference_ttft.map(|ttft| ttft.as_millis() as u32),
                         extra_body,
@@ -1645,6 +1649,7 @@ pub struct InferenceDatabaseInsertMetadata {
     pub extra_body: UnfilteredInferenceExtraBody,
     pub extra_headers: UnfilteredInferenceExtraHeaders,
     pub snapshot_hash: SnapshotHash,
+    pub api_key_public_id: Option<String>,
 }
 
 async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sync>(
@@ -1655,7 +1660,10 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
     metadata: InferenceDatabaseInsertMetadata,
 ) {
     let model_inferences = result
-        .get_model_inferences(metadata.snapshot_hash.clone())
+        .get_model_inferences(
+            metadata.snapshot_hash.clone(),
+            metadata.api_key_public_id.clone(),
+        )
         .await;
     let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> =
         input.clone().write_all_files(config);

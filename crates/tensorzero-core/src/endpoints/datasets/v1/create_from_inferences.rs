@@ -203,6 +203,7 @@ mod tests {
             processing_time_ms: None,
             ttft_ms: None,
             snapshot_hash: None,
+            api_key_public_id: None,
         })
     }
 

@@ -1660,6 +1660,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             tags: make_tags(&datapoint1_id),
             extra_body: Some(UnfilteredInferenceExtraBody::default()),
             snapshot_hash: None,
+            api_key_public_id: None,
         },
         ChatInferenceDatabaseInsert {
             id: inference2_id,
@@ -1675,6 +1676,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             tags: make_tags(&datapoint2_id),
             extra_body: Some(UnfilteredInferenceExtraBody::default()),
             snapshot_hash: None,
+            api_key_public_id: None,
         },
     ];
     conn.insert_chat_inferences(&inferences)
@@ -1706,6 +1708,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
+            api_key_public_id: None,
             timestamp: None,
         },
         // Inference 1 - model inference B (fallback)
@@ -1729,6 +1732,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
+            api_key_public_id: None,
             timestamp: None,
         },
         // Inference 2 - model inference A (has cost)
@@ -1752,6 +1756,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
+            api_key_public_id: None,
             timestamp: None,
         },
         // Inference 2 - model inference B (NO cost => total cost should be NULL)
@@ -1775,6 +1780,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
+            api_key_public_id: None,
             timestamp: None,
         },
     ];
@@ -1945,6 +1951,7 @@ fn make_model_inference_for_eval(
         snapshot_hash: None,
         provider_cache_read_input_tokens: None,
         provider_cache_write_input_tokens: None,
+        api_key_public_id: None,
         timestamp: None,
     }
 }
@@ -1994,6 +2001,7 @@ fn make_eval_chat_inference(p: EvalChatInferenceParams<'_>) -> ChatInferenceData
         tags,
         extra_body: Some(UnfilteredInferenceExtraBody::default()),
         snapshot_hash: None,
+        api_key_public_id: None,
     }
 }
 

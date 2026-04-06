@@ -1203,6 +1203,7 @@ pub async fn write_completed_batch_inference<'a>(
             tool_config,
             processing_time: None,
             ttft_ms: None,
+            api_key_public_id: None, // Not currently tracked for batch inference
             tags,
             // Not currently supported as a batch inference parameter
             extra_body: Default::default(),
@@ -1211,7 +1212,7 @@ pub async fn write_completed_batch_inference<'a>(
         };
         model_inference_rows_to_write.extend(
             inference_result
-                .get_model_inferences(config.hash.clone())
+                .get_model_inferences(config.hash.clone(), None)
                 .await,
         );
         match inference_result {
