@@ -655,6 +655,9 @@ pub enum ErrorDetails {
         model_name: String,
         provider_name: String,
     },
+    InvalidAnthropicCompatibleRequest {
+        message: String,
+    },
     InvalidOpenAICompatibleRequest {
         message: String,
     },
@@ -944,6 +947,7 @@ impl ErrorDetails {
             ErrorDetails::InvalidMessage { .. } => tracing::Level::WARN,
             ErrorDetails::InvalidModel { .. } => tracing::Level::ERROR,
             ErrorDetails::InvalidModelProvider { .. } => tracing::Level::ERROR,
+            ErrorDetails::InvalidAnthropicCompatibleRequest { .. } => tracing::Level::ERROR,
             ErrorDetails::InvalidOpenAICompatibleRequest { .. } => tracing::Level::ERROR,
             ErrorDetails::InvalidProviderConfig { .. } => tracing::Level::ERROR,
             ErrorDetails::InvalidRequest { .. } => tracing::Level::WARN,
@@ -1119,6 +1123,7 @@ impl ErrorDetails {
             ErrorDetails::InvalidMetricName { .. } => StatusCode::BAD_REQUEST,
             ErrorDetails::InvalidModel { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::InvalidModelProvider { .. } => StatusCode::INTERNAL_SERVER_ERROR,
+            ErrorDetails::InvalidAnthropicCompatibleRequest { .. } => StatusCode::BAD_REQUEST,
             ErrorDetails::InvalidOpenAICompatibleRequest { .. } => StatusCode::BAD_REQUEST,
             ErrorDetails::InvalidProviderConfig { .. } => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorDetails::InvalidRequest { .. } => StatusCode::BAD_REQUEST,
@@ -1747,6 +1752,10 @@ impl std::fmt::Display for ErrorDetails {
                     "Invalid val fraction: {val_fraction}. Must be between 0 and 1."
                 )
             }
+            ErrorDetails::InvalidAnthropicCompatibleRequest { message } => write!(
+                f,
+                "Invalid request to Anthropic-compatible endpoint: {message}"
+            ),
             ErrorDetails::InvalidOpenAICompatibleRequest { message } => write!(
                 f,
                 "Invalid request to OpenAI-compatible endpoint: {message}"

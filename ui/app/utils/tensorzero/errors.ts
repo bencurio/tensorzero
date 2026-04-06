@@ -482,6 +482,11 @@ export class TensorZeroServerError extends Error {
       super(message, { status: HttpStatusCode.INTERNAL_SERVER_ERROR });
     }
   };
+  static InvalidAnthropicCompatibleRequest = class InvalidAnthropicCompatibleRequest extends TensorZeroServerError {
+    constructor(message: string) {
+      super(message, { status: HttpStatusCode.BAD_REQUEST });
+    }
+  };
   static InvalidOpenAICompatibleRequest = class InvalidOpenAICompatibleRequest extends TensorZeroServerError {
     constructor(message: string) {
       super(message, { status: HttpStatusCode.BAD_REQUEST });
