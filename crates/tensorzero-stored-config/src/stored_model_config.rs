@@ -10,6 +10,17 @@ use crate::stored_credential_location::{
 };
 use crate::{StoredExtraBodyConfig, StoredExtraHeadersConfig, StoredTimeoutsConfig};
 
+/// Stored mirror of `tensorzero_core::model::PromptCachingMode`.
+/// `Option` wrapper allows additive discovery of new rows (None → default Disabled).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StoredPromptCachingMode {
+    #[default]
+    Disabled,
+    Automatic,
+    Explicit,
+}
+
 // --- Top-level model config ---
 
 #[serde_with::skip_serializing_none]
@@ -32,6 +43,7 @@ pub struct StoredModelProvider {
     pub extra_headers: Option<StoredExtraHeadersConfig>,
     pub timeouts: Option<StoredTimeoutsConfig>,
     pub discard_unknown_chunks: Option<bool>,
+    pub prompt_caching: Option<StoredPromptCachingMode>,
     pub cost: Option<StoredCostConfig>,
     pub batch_cost: Option<StoredUnifiedCostConfig>,
 }

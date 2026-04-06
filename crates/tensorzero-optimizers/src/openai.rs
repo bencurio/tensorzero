@@ -373,6 +373,7 @@ pub fn convert_to_optimizer_status(job: OpenAIFineTuningJob) -> Result<Optimizat
                 extra_body: None,
                 timeouts: TimeoutsConfig::default(),
                 discard_unknown_chunks: false,
+                prompt_caching: Default::default(),
                 cost: None,
                 batch_cost: None,
             };

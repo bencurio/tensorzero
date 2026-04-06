@@ -350,6 +350,7 @@ impl JobHandle for TogetherSFTJobHandle {
                     extra_body: None,
                     timeouts: TimeoutsConfig::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: Default::default(),
                     cost: None,
                     batch_cost: None,
                 };

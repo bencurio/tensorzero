@@ -13,7 +13,7 @@ use strum::VariantNames;
 use tensorzero_derive::TensorZeroDeserialize;
 use tensorzero_stored_config::{
     StoredContentBlockType, StoredHostedProviderKind, StoredModelConfig, StoredModelProvider,
-    StoredOpenAIAPIType, StoredProviderConfig,
+    StoredOpenAIAPIType, StoredPromptCachingMode, StoredProviderConfig,
 };
 use tokio::time::error::Elapsed;
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -197,6 +197,7 @@ impl UninitializedModelConfig {
                         extra_headers: provider.extra_headers,
                         timeouts: provider.timeouts,
                         discard_unknown_chunks: provider.discard_unknown_chunks,
+                        prompt_caching: provider.prompt_caching,
                         cost,
                         batch_cost,
                     },
@@ -257,9 +258,23 @@ impl TryFrom<StoredModelProvider> for UninitializedModelProvider {
                 .map(TimeoutsConfig::from)
                 .unwrap_or_default(),
             discard_unknown_chunks: stored.discard_unknown_chunks.unwrap_or_default(),
+            prompt_caching: stored
+                .prompt_caching
+                .map(PromptCachingMode::from)
+                .unwrap_or_default(),
             cost,
             batch_cost,
         })
+    }
+}
+
+impl From<StoredPromptCachingMode> for PromptCachingMode {
+    fn from(stored: StoredPromptCachingMode) -> Self {
+        match stored {
+            StoredPromptCachingMode::Disabled => Self::Disabled,
+            StoredPromptCachingMode::Automatic => Self::Automatic,
+            StoredPromptCachingMode::Explicit => Self::Explicit,
+        }
     }
 }
 
@@ -1323,6 +1338,27 @@ fn wrap_provider_stream(
     )
 }
 
+/// Controls how prompt caching breakpoints are injected into provider requests.
+///
+/// - `Disabled` (default): no `cache_control` is injected.
+/// - `Automatic`: a top-level `"cache_control": {"type": "ephemeral"}` field is added to the
+///   request body. OpenRouter uses this to automatically advance the cache breakpoint as the
+///   conversation grows. Only works when OpenRouter routes to the Anthropic provider directly
+///   (not Bedrock / Vertex).
+/// - `Explicit`: `cache_control` blocks are injected on individual content blocks:
+///   the last system block (converted to a content-block array if it was a plain string),
+///   and the last tool definition. Works across all Anthropic-compatible providers.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[cfg_attr(feature = "ts-bindings", ts(export))]
+#[serde(rename_all = "lowercase")]
+pub enum PromptCachingMode {
+    #[default]
+    Disabled,
+    Automatic,
+    Explicit,
+}
+
 #[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[cfg_attr(feature = "ts-bindings", ts(export))]
@@ -1340,6 +1376,9 @@ pub struct UninitializedModelProvider {
     /// By default, unknown chunks are forwarded as-is in the stream.
     #[serde(default)]
     pub discard_unknown_chunks: bool,
+    /// Controls how prompt caching breakpoints are injected. See [`PromptCachingMode`].
+    #[serde(default)]
+    pub prompt_caching: PromptCachingMode,
     #[serde(default)]
     #[cfg_attr(feature = "ts-bindings", ts(skip))]
     pub cost: Option<UninitializedCostConfig>,
@@ -1361,6 +1400,8 @@ pub struct ModelProvider {
     pub timeouts: TimeoutsConfig,
     /// See `UninitializedModelProvider.discard_unknown_chunks`.
     pub discard_unknown_chunks: bool,
+    /// See `UninitializedModelProvider.prompt_caching`.
+    pub prompt_caching: PromptCachingMode,
     #[serde(skip)]
     #[cfg_attr(feature = "ts-bindings", ts(skip))]
     pub cost: Option<CostConfig>,
@@ -3259,6 +3300,8 @@ impl ShorthandModelConfig for ModelConfig {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
+
                     cost: None,
                     batch_cost: None,
                 },
@@ -3375,6 +3418,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -3467,6 +3511,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -3512,6 +3557,7 @@ mod tests {
             extra_headers: Default::default(),
             timeouts: Default::default(),
             discard_unknown_chunks: false,
+            prompt_caching: PromptCachingMode::Disabled,
             cost: None,
             batch_cost: None,
         };
@@ -3687,6 +3733,7 @@ mod tests {
                         extra_headers: Default::default(),
                         timeouts: Default::default(),
                         discard_unknown_chunks: false,
+                        prompt_caching: PromptCachingMode::Disabled,
                         cost: None,
                         batch_cost: None,
                     },
@@ -3700,6 +3747,7 @@ mod tests {
                         extra_headers: Default::default(),
                         timeouts: Default::default(),
                         discard_unknown_chunks: false,
+                        prompt_caching: PromptCachingMode::Disabled,
                         cost: None,
                         batch_cost: None,
                     },
@@ -3782,6 +3830,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -3875,6 +3924,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -3958,6 +4008,7 @@ mod tests {
                         extra_headers: Default::default(),
                         timeouts: Default::default(),
                         discard_unknown_chunks: false,
+                        prompt_caching: PromptCachingMode::Disabled,
                         cost: None,
                         batch_cost: None,
                     },
@@ -3971,6 +4022,7 @@ mod tests {
                         extra_headers: Default::default(),
                         timeouts: Default::default(),
                         discard_unknown_chunks: false,
+                        prompt_caching: PromptCachingMode::Disabled,
                         cost: None,
                         batch_cost: None,
                     },
@@ -4073,6 +4125,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -4212,6 +4265,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -4372,6 +4426,7 @@ mod tests {
                     extra_headers: Default::default(),
                     timeouts: Default::default(),
                     discard_unknown_chunks: false,
+                    prompt_caching: PromptCachingMode::Disabled,
                     cost: None,
                     batch_cost: None,
                 },
@@ -4731,6 +4786,7 @@ mod tests {
             extra_headers: Default::default(),
             timeouts: Default::default(),
             discard_unknown_chunks: false,
+            prompt_caching: PromptCachingMode::Disabled,
             cost: Some(cost_config),
             batch_cost: Some(batch_cost_config),
         };
@@ -4770,6 +4826,7 @@ mod tests {
             extra_headers: Default::default(),
             timeouts: Default::default(),
             discard_unknown_chunks: false,
+            prompt_caching: PromptCachingMode::Disabled,
             cost: Some(cost_config),
             batch_cost: None,
         };
@@ -4796,6 +4853,7 @@ mod tests {
             extra_headers: Default::default(),
             timeouts: Default::default(),
             discard_unknown_chunks: false,
+            prompt_caching: PromptCachingMode::Disabled,
             cost: None,
             batch_cost: None,
         };

@@ -217,6 +217,7 @@ mod tests {
                         extra_headers: Default::default(),
                         timeouts: Default::default(),
                         discard_unknown_chunks: false,
+                        prompt_caching: Default::default(),
                         cost: None,
                         batch_cost: None,
                     },

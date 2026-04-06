@@ -1040,6 +1040,96 @@ impl<T> UrlParseErrExt<T> for Result<T, url::ParseError> {
     }
 }
 
+/// Injects a top-level `cache_control` field for automatic OpenRouter prompt caching.
+///
+/// OpenRouter's automatic caching mode requires a single `"cache_control"` key at the top
+/// level of the request body (not inside any message). OpenRouter then automatically advances
+/// the cache breakpoint as the conversation grows.
+///
+/// When this field is present, OpenRouter will **only route to the Anthropic provider directly**
+/// and exclude Bedrock and Vertex endpoints. Use [`inject_explicit_prompt_caching`] if you need
+/// cross-provider compatibility (Bedrock, Vertex).
+pub fn inject_auto_prompt_caching(body: &mut Value) {
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert(
+            "cache_control".to_string(),
+            serde_json::json!({"type": "ephemeral"}),
+        );
+    }
+}
+
+/// Injects Anthropic-style `cache_control` breakpoints into individual content blocks.
+///
+/// Adds `"cache_control": {"type": "ephemeral"}` to:
+/// - The last block of the top-level `system` array (Anthropic native format).
+/// - **Or**, if there is no top-level `system` array, the first `role: "system"` message
+///   inside the `messages` array (OpenRouter / OpenAI-compatible format). If that message's
+///   `content` is a plain string it is converted to a single-element content-block array so
+///   that `cache_control` can be attached.
+/// - The last element of the `tools` array (if present).
+///
+/// Works across all Anthropic-compatible providers including Amazon Bedrock and Google Vertex AI.
+pub fn inject_explicit_prompt_caching(body: &mut Value) {
+    let cache_control = serde_json::json!({"type": "ephemeral"});
+
+    // Inject on the last system block (Anthropic native: top-level `system` array).
+    let injected_top_system = if let Some(obj) = body
+        .get_mut("system")
+        .and_then(|s| s.as_array_mut())
+        .and_then(|a| a.last_mut())
+        .and_then(|v| v.as_object_mut())
+    {
+        obj.insert("cache_control".to_string(), cache_control.clone());
+        true
+    } else {
+        false
+    };
+
+    // Fallback: inject on the first `role: "system"` message inside `messages`
+    // (OpenRouter / OpenAI-compatible format where the system prompt is the first message).
+    if !injected_top_system {
+        if let Some(messages) = body.get_mut("messages").and_then(|m| m.as_array_mut()) {
+            if let Some(system_msg) = messages
+                .iter_mut()
+                .find(|msg| msg.get("role").and_then(|r| r.as_str()) == Some("system"))
+            {
+                if let Some(obj) = system_msg.as_object_mut() {
+                    let content = obj.remove("content");
+                    let new_content = match content {
+                        // Already an array of content blocks - inject on the last one.
+                        Some(Value::Array(mut blocks)) => {
+                            if let Some(last) = blocks.last_mut().and_then(|v| v.as_object_mut()) {
+                                last.insert("cache_control".to_string(), cache_control.clone());
+                            }
+                            Value::Array(blocks)
+                        }
+                        // Plain string content - convert to a single-element content-block
+                        // array so `cache_control` can be attached.
+                        Some(Value::String(text)) => Value::Array(vec![serde_json::json!({
+                            "type": "text",
+                            "text": text,
+                            "cache_control": cache_control.clone(),
+                        })]),
+                        // Null or missing content - nothing to cache.
+                        other => other.unwrap_or(Value::Null),
+                    };
+                    obj.insert("content".to_string(), new_content);
+                }
+            }
+        }
+    }
+
+    // Inject on the last tool.
+    if let Some(obj) = body
+        .get_mut("tools")
+        .and_then(|t| t.as_array_mut())
+        .and_then(|a| a.last_mut())
+        .and_then(|v| v.as_object_mut())
+    {
+        obj.insert("cache_control".to_string(), cache_control);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;

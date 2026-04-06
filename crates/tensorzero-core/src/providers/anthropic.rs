@@ -277,7 +277,7 @@ impl InferenceProvider for AnthropicProvider {
     ) -> Result<ProviderInferenceResponse, Error> {
         let all_provider_tools =
             collect_all_provider_tools(&self.provider_tools, request, model_name, provider_name);
-        let request_body = serde_json::to_value(
+        let mut request_body = serde_json::to_value(
             AnthropicRequestBody::new(&self.model_name, request, &all_provider_tools).await?,
         )
         .map_err(|e| {
@@ -288,6 +288,15 @@ impl InferenceProvider for AnthropicProvider {
                 ),
             })
         })?;
+        match model_provider.prompt_caching {
+            crate::model::PromptCachingMode::Automatic => {
+                super::helpers::inject_auto_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Explicit => {
+                super::helpers::inject_explicit_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Disabled => {}
+        }
         let api_key = self
             .credentials
             .get_api_key(dynamic_api_keys)
@@ -388,7 +397,7 @@ impl InferenceProvider for AnthropicProvider {
     ) -> Result<(PeekableProviderInferenceResponseStream, String), Error> {
         let all_provider_tools =
             collect_all_provider_tools(&self.provider_tools, request, model_name, provider_name);
-        let request_body = serde_json::to_value(
+        let mut request_body = serde_json::to_value(
             AnthropicRequestBody::new(&self.model_name, request, &all_provider_tools).await?,
         )
         .map_err(|e| {
@@ -399,6 +408,15 @@ impl InferenceProvider for AnthropicProvider {
                 ),
             })
         })?;
+        match model_provider.prompt_caching {
+            crate::model::PromptCachingMode::Automatic => {
+                super::helpers::inject_auto_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Explicit => {
+                super::helpers::inject_explicit_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Disabled => {}
+        }
         let start_time = Instant::now();
         let api_key = self.credentials.get_api_key(api_key).map_err(|e| e.log())?;
         let request_url = self.messages_url()?;

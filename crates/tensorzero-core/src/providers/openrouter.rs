@@ -194,7 +194,7 @@ impl InferenceProvider for OpenRouterProvider {
             .map_err(|e| e.log())?;
         let start_time = Instant::now();
         let request_body_obj = OpenRouterRequest::new(&self.model_name, request.request).await?;
-        let request_body = serde_json::to_value(request_body_obj).map_err(|e| {
+        let mut request_body = serde_json::to_value(request_body_obj).map_err(|e| {
             Error::new(ErrorDetails::Serialization {
                 message: format!(
                     "Error serializing request: {}",
@@ -202,6 +202,15 @@ impl InferenceProvider for OpenRouterProvider {
                 ),
             })
         })?;
+        match model_provider.prompt_caching {
+            crate::model::PromptCachingMode::Automatic => {
+                super::helpers::inject_auto_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Explicit => {
+                super::helpers::inject_explicit_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Disabled => {}
+        }
         let mut request_builder = http_client
             .post(request_url)
             .header("X-Title", "TensorZero")
@@ -297,7 +306,7 @@ impl InferenceProvider for OpenRouterProvider {
         dynamic_api_keys: &'a InferenceCredentials,
         model_provider: &'a ModelProvider,
     ) -> Result<(PeekableProviderInferenceResponseStream, String), Error> {
-        let request_body =
+        let mut request_body =
             serde_json::to_value(OpenRouterRequest::new(&self.model_name, request).await?)
                 .map_err(|e| {
                     Error::new(ErrorDetails::Serialization {
@@ -307,6 +316,15 @@ impl InferenceProvider for OpenRouterProvider {
                         ),
                     })
                 })?;
+        match model_provider.prompt_caching {
+            crate::model::PromptCachingMode::Automatic => {
+                super::helpers::inject_auto_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Explicit => {
+                super::helpers::inject_explicit_prompt_caching(&mut request_body);
+            }
+            crate::model::PromptCachingMode::Disabled => {}
+        }
         let request_url = get_chat_url(&OPENROUTER_DEFAULT_BASE_URL)?;
         let api_key = self
             .credentials
