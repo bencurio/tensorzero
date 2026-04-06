@@ -729,7 +729,54 @@ fn chat_content_to_anthropic_blocks(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::CacheParamsOptions;
+    use crate::inference::types::Usage;
+    use crate::tool::InferenceResponseToolCall;
     use serde_json::json;
+    use uuid::Uuid;
+
+    /// Helper to create a minimal AnthropicMessagesParams for testing.
+    fn make_params(model: &str, messages: Vec<AnthropicMessage>) -> AnthropicMessagesParams {
+        AnthropicMessagesParams {
+            model: model.to_string(),
+            messages,
+            max_tokens: 1024,
+            system: None,
+            stream: None,
+            temperature: None,
+            top_p: None,
+            top_k: None,
+            stop_sequences: None,
+            tools: None,
+            tool_choice: None,
+            tensorzero_variant_name: None,
+            tensorzero_dryrun: None,
+            tensorzero_episode_id: None,
+            tensorzero_namespace: None,
+            tensorzero_cache_options: None,
+            tensorzero_extra_body: Default::default(),
+            tensorzero_extra_headers: Default::default(),
+            tensorzero_tags: Default::default(),
+            tensorzero_credentials: Default::default(),
+            tensorzero_internal_dynamic_variant_config: None,
+            tensorzero_provider_tools: Default::default(),
+            tensorzero_params: None,
+            tensorzero_include_raw_usage: false,
+            tensorzero_include_original_response: false,
+            tensorzero_include_raw_response: false,
+        }
+    }
+
+    fn user_msg(text: &str) -> AnthropicMessage {
+        AnthropicMessage {
+            role: AnthropicRole::User,
+            content: AnthropicMessageContent::Text(text.to_string()),
+        }
+    }
+
+    // ========================================================================
+    // Stop reason conversion
+    // ========================================================================
 
     #[test]
     fn test_anthropic_stop_reason_from_finish_reason() {
@@ -749,11 +796,23 @@ mod tests {
             AnthropicStopReason::from(FinishReason::StopSequence),
             AnthropicStopReason::StopSequence
         );
+        assert_eq!(
+            AnthropicStopReason::from(FinishReason::ContentFilter),
+            AnthropicStopReason::EndTurn
+        );
+        assert_eq!(
+            AnthropicStopReason::from(FinishReason::Unknown),
+            AnthropicStopReason::EndTurn
+        );
     }
+
+    // ========================================================================
+    // Usage conversion
+    // ========================================================================
 
     #[test]
     fn test_anthropic_usage_from_internal() {
-        let usage = crate::inference::types::Usage {
+        let usage = Usage {
             input_tokens: Some(100),
             output_tokens: Some(50),
             provider_cache_read_input_tokens: Some(80),
@@ -765,100 +824,648 @@ mod tests {
         assert_eq!(anthropic_usage.output_tokens, 50);
         assert_eq!(anthropic_usage.cache_read_input_tokens, Some(80));
         assert_eq!(anthropic_usage.cache_creation_input_tokens, Some(20));
+        assert_eq!(anthropic_usage.tensorzero_cost, Some(Decimal::new(5, 2)));
     }
 
     #[test]
-    fn test_anthropic_messages_to_input_simple() {
+    fn test_anthropic_usage_from_internal_none_tokens() {
+        let usage = Usage {
+            input_tokens: None,
+            output_tokens: None,
+            provider_cache_read_input_tokens: None,
+            provider_cache_write_input_tokens: None,
+            cost: None,
+        };
+        let anthropic_usage: AnthropicUsage = usage.into();
+        assert_eq!(anthropic_usage.input_tokens, 0);
+        assert_eq!(anthropic_usage.output_tokens, 0);
+        assert_eq!(anthropic_usage.cache_read_input_tokens, None);
+        assert_eq!(anthropic_usage.cache_creation_input_tokens, None);
+        assert_eq!(anthropic_usage.tensorzero_cost, None);
+    }
+
+    // ========================================================================
+    // Message-to-input conversion
+    // ========================================================================
+
+    #[test]
+    fn test_anthropic_messages_to_input_simple_text() {
+        let messages = vec![user_msg("Hello")];
+        let input = anthropic_messages_to_input(messages, None).expect("should parse");
+        assert_eq!(input.messages.len(), 1);
+        assert_eq!(input.messages[0].role, Role::User);
+        assert_eq!(
+            input.messages[0].content[0],
+            InputMessageContent::Text(Text {
+                text: "Hello".to_string()
+            })
+        );
+        assert!(input.system.is_none());
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_with_string_system() {
+        let messages = vec![user_msg("Hello")];
+        let system = Some(json!("You are a helpful assistant."));
+        let input = anthropic_messages_to_input(messages, system).expect("should parse");
+        assert_eq!(
+            input.system,
+            Some(System::Text("You are a helpful assistant.".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_with_array_system() {
+        let messages = vec![user_msg("Hello")];
+        let system = Some(json!([
+            {"type": "text", "text": "You are helpful."},
+            {"type": "text", "text": "Be concise."}
+        ]));
+        let input = anthropic_messages_to_input(messages, system).expect("should parse");
+        assert_eq!(
+            input.system,
+            Some(System::Text("You are helpful.\nBe concise.".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_invalid_system_type() {
+        let messages = vec![user_msg("Hello")];
+        let system = Some(json!(42));
+        let result = anthropic_messages_to_input(messages, system);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_unsupported_system_block_type() {
+        let messages = vec![user_msg("Hello")];
+        let system = Some(json!([{"type": "image", "data": "abc"}]));
+        let result = anthropic_messages_to_input(messages, system);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_content_blocks() {
         let messages = vec![AnthropicMessage {
             role: AnthropicRole::User,
-            content: AnthropicMessageContent::Text("Hello".to_string()),
+            content: AnthropicMessageContent::Blocks(vec![
+                AnthropicContentBlock::Text {
+                    text: "Part 1".to_string(),
+                },
+                AnthropicContentBlock::Text {
+                    text: "Part 2".to_string(),
+                },
+            ]),
         }];
         let input = anthropic_messages_to_input(messages, None).expect("should parse");
         assert_eq!(input.messages.len(), 1);
+        assert_eq!(input.messages[0].content.len(), 2);
+        assert_eq!(
+            input.messages[0].content[0],
+            InputMessageContent::Text(Text {
+                text: "Part 1".to_string()
+            })
+        );
+        assert_eq!(
+            input.messages[0].content[1],
+            InputMessageContent::Text(Text {
+                text: "Part 2".to_string()
+            })
+        );
     }
 
     #[test]
-    fn test_anthropic_messages_to_input_with_system() {
+    fn test_anthropic_messages_to_input_multi_turn() {
+        let messages = vec![
+            user_msg("Hello"),
+            AnthropicMessage {
+                role: AnthropicRole::Assistant,
+                content: AnthropicMessageContent::Text("Hi there!".to_string()),
+            },
+            user_msg("How are you?"),
+        ];
+        let input = anthropic_messages_to_input(messages, None).expect("should parse");
+        assert_eq!(input.messages.len(), 3);
+        assert_eq!(input.messages[0].role, Role::User);
+        assert_eq!(input.messages[1].role, Role::Assistant);
+        assert_eq!(input.messages[2].role, Role::User);
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_tool_use_and_result() {
+        let messages = vec![
+            AnthropicMessage {
+                role: AnthropicRole::Assistant,
+                content: AnthropicMessageContent::Blocks(vec![AnthropicContentBlock::ToolUse {
+                    id: "call_123".to_string(),
+                    name: "get_weather".to_string(),
+                    input: json!({"city": "Tokyo"}),
+                }]),
+            },
+            AnthropicMessage {
+                role: AnthropicRole::User,
+                content: AnthropicMessageContent::Blocks(vec![AnthropicContentBlock::ToolResult {
+                    tool_use_id: "call_123".to_string(),
+                    content: Some(json!("Sunny, 25°C")),
+                    is_error: false,
+                }]),
+            },
+        ];
+        let input = anthropic_messages_to_input(messages, None).expect("should parse");
+        assert_eq!(input.messages.len(), 2);
+
+        // Check tool use block
+        match &input.messages[0].content[0] {
+            InputMessageContent::ToolCall(ToolCallWrapper::InferenceResponseToolCall(tc)) => {
+                assert_eq!(tc.id, "call_123");
+                assert_eq!(tc.raw_name, "get_weather");
+                assert_eq!(tc.raw_arguments, "{\"city\":\"Tokyo\"}");
+            }
+            other => panic!("Expected ToolCall, got {other:?}"),
+        }
+
+        // Check tool result block
+        match &input.messages[1].content[0] {
+            InputMessageContent::ToolResult(tr) => {
+                assert_eq!(tr.id, "call_123");
+                assert_eq!(tr.result, "Sunny, 25°C");
+            }
+            other => panic!("Expected ToolResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_tool_result_array_content() {
         let messages = vec![AnthropicMessage {
             role: AnthropicRole::User,
-            content: AnthropicMessageContent::Text("Hello".to_string()),
+            content: AnthropicMessageContent::Blocks(vec![AnthropicContentBlock::ToolResult {
+                tool_use_id: "call_456".to_string(),
+                content: Some(json!([
+                    {"type": "text", "text": "Line 1"},
+                    {"type": "text", "text": "Line 2"}
+                ])),
+                is_error: false,
+            }]),
         }];
-        let system = Some(json!("You are a helpful assistant."));
-        let input = anthropic_messages_to_input(messages, system).expect("should parse");
-        assert!(input.system.is_some());
+        let input = anthropic_messages_to_input(messages, None).expect("should parse");
+        match &input.messages[0].content[0] {
+            InputMessageContent::ToolResult(tr) => {
+                assert_eq!(tr.result, "Line 1\nLine 2");
+            }
+            other => panic!("Expected ToolResult, got {other:?}"),
+        }
     }
 
     #[test]
-    fn test_model_prefix_parsing() {
-        let params = AnthropicMessagesParams {
-            model: "tensorzero::function_name::my_func".to_string(),
-            messages: vec![AnthropicMessage {
-                role: AnthropicRole::User,
-                content: AnthropicMessageContent::Text("test".to_string()),
-            }],
-            max_tokens: 1024,
-            system: None,
-            stream: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            tools: None,
-            tool_choice: None,
-            tensorzero_variant_name: None,
-            tensorzero_dryrun: None,
-            tensorzero_episode_id: None,
-            tensorzero_namespace: None,
-            tensorzero_cache_options: None,
-            tensorzero_extra_body: Default::default(),
-            tensorzero_extra_headers: Default::default(),
-            tensorzero_tags: Default::default(),
-            tensorzero_credentials: Default::default(),
-            tensorzero_internal_dynamic_variant_config: None,
-            tensorzero_provider_tools: Default::default(),
-            tensorzero_params: None,
-            tensorzero_include_raw_usage: false,
-            tensorzero_include_original_response: false,
-            tensorzero_include_raw_response: false,
-        };
+    fn test_anthropic_messages_to_input_thinking_block() {
+        let messages = vec![AnthropicMessage {
+            role: AnthropicRole::Assistant,
+            content: AnthropicMessageContent::Blocks(vec![
+                AnthropicContentBlock::Thinking {
+                    thinking: "Let me reason...".to_string(),
+                    signature: Some("sig_abc".to_string()),
+                },
+                AnthropicContentBlock::Text {
+                    text: "The answer is 42.".to_string(),
+                },
+            ]),
+        }];
+        let input = anthropic_messages_to_input(messages, None).expect("should parse");
+        assert_eq!(input.messages[0].content.len(), 2);
+        match &input.messages[0].content[0] {
+            InputMessageContent::Thought(t) => {
+                assert_eq!(t.text, Some("Let me reason...".to_string()));
+                assert_eq!(t.signature, Some("sig_abc".to_string()));
+            }
+            other => panic!("Expected Thought, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_anthropic_messages_to_input_image_unsupported_source() {
+        let messages = vec![AnthropicMessage {
+            role: AnthropicRole::User,
+            content: AnthropicMessageContent::Blocks(vec![AnthropicContentBlock::Image {
+                source: AnthropicImageSource {
+                    source_type: "s3".to_string(),
+                    media_type: None,
+                    data: None,
+                    url: None,
+                },
+            }]),
+        }];
+        let result = anthropic_messages_to_input(messages, None);
+        assert!(result.is_err());
+    }
+
+    // ========================================================================
+    // Params conversion (try_from_anthropic)
+    // ========================================================================
+
+    #[test]
+    fn test_try_from_anthropic_function_name() {
+        let params = make_params("tensorzero::function_name::my_func", vec![user_msg("test")]);
         let p = Params::try_from_anthropic(params).expect("should parse");
         assert_eq!(p.function_name.as_deref(), Some("my_func"));
         assert_eq!(p.model_name, None);
     }
 
     #[test]
-    fn test_invalid_model_prefix() {
-        let params = AnthropicMessagesParams {
-            model: "claude-3-opus".to_string(),
-            messages: vec![AnthropicMessage {
-                role: AnthropicRole::User,
-                content: AnthropicMessageContent::Text("test".to_string()),
-            }],
-            max_tokens: 1024,
-            system: None,
-            stream: None,
-            temperature: None,
-            top_p: None,
-            top_k: None,
-            stop_sequences: None,
-            tools: None,
-            tool_choice: None,
-            tensorzero_variant_name: None,
-            tensorzero_dryrun: None,
-            tensorzero_episode_id: None,
-            tensorzero_namespace: None,
-            tensorzero_cache_options: None,
-            tensorzero_extra_body: Default::default(),
-            tensorzero_extra_headers: Default::default(),
-            tensorzero_tags: Default::default(),
-            tensorzero_credentials: Default::default(),
-            tensorzero_internal_dynamic_variant_config: None,
-            tensorzero_provider_tools: Default::default(),
-            tensorzero_params: None,
-            tensorzero_include_raw_usage: false,
-            tensorzero_include_original_response: false,
-            tensorzero_include_raw_response: false,
-        };
+    fn test_try_from_anthropic_model_name() {
+        let params = make_params(
+            "tensorzero::model_name::openrouter::anthropic/claude-sonnet-4-6",
+            vec![user_msg("test")],
+        );
+        let p = Params::try_from_anthropic(params).expect("should parse");
+        assert_eq!(p.function_name, None);
+        assert_eq!(
+            p.model_name.as_deref(),
+            Some("openrouter::anthropic/claude-sonnet-4-6")
+        );
+    }
+
+    #[test]
+    fn test_try_from_anthropic_invalid_model_prefix() {
+        let params = make_params("claude-3-opus", vec![user_msg("test")]);
         assert!(Params::try_from_anthropic(params).is_err());
+    }
+
+    #[test]
+    fn test_try_from_anthropic_empty_function_name() {
+        let params = make_params("tensorzero::function_name::", vec![user_msg("test")]);
+        assert!(Params::try_from_anthropic(params).is_err());
+    }
+
+    #[test]
+    fn test_try_from_anthropic_empty_model_name() {
+        let params = make_params("tensorzero::model_name::", vec![user_msg("test")]);
+        assert!(Params::try_from_anthropic(params).is_err());
+    }
+
+    #[test]
+    fn test_try_from_anthropic_inference_params() {
+        let mut params = make_params("tensorzero::function_name::test", vec![user_msg("test")]);
+        params.temperature = Some(0.7);
+        params.top_p = Some(0.9);
+        params.max_tokens = 2048;
+        params.stop_sequences = Some(vec!["END".to_string()]);
+
+        let p = Params::try_from_anthropic(params).expect("should parse");
+        assert_eq!(p.params.chat_completion.temperature, Some(0.7));
+        assert_eq!(p.params.chat_completion.top_p, Some(0.9));
+        assert_eq!(p.params.chat_completion.max_tokens, Some(2048));
+        assert_eq!(
+            p.params.chat_completion.stop_sequences,
+            Some(vec!["END".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_try_from_anthropic_tensorzero_extensions() {
+        let episode_id = Uuid::now_v7();
+        let mut params = make_params("tensorzero::function_name::test", vec![user_msg("test")]);
+        params.tensorzero_episode_id = Some(episode_id);
+        params.tensorzero_variant_name = Some("my_variant".to_string());
+        params.tensorzero_dryrun = Some(true);
+        params.tensorzero_tags = HashMap::from([("env".to_string(), "staging".to_string())]);
+
+        let p = Params::try_from_anthropic(params).expect("should parse");
+        assert_eq!(p.episode_id, Some(episode_id));
+        assert_eq!(p.variant_name.as_deref(), Some("my_variant"));
+        assert_eq!(p.dryrun, Some(true));
+        assert_eq!(p.tags.get("env").map(String::as_str), Some("staging"));
+    }
+
+    #[test]
+    fn test_try_from_anthropic_default_cache_options() {
+        let params = make_params("tensorzero::function_name::test", vec![user_msg("test")]);
+        let p = Params::try_from_anthropic(params).expect("should parse");
+        assert_eq!(p.cache_options, CacheParamsOptions::default());
+    }
+
+    // ========================================================================
+    // Tool conversion
+    // ========================================================================
+
+    #[test]
+    fn test_convert_anthropic_tools() {
+        let tools = vec![
+            AnthropicTool {
+                name: "get_weather".to_string(),
+                description: Some("Get weather info".to_string()),
+                input_schema: json!({"type": "object", "properties": {"city": {"type": "string"}}}),
+            },
+            AnthropicTool {
+                name: "search".to_string(),
+                description: None,
+                input_schema: json!({"type": "object"}),
+            },
+        ];
+        let (tool_choice, additional_tools) = convert_anthropic_tools(Some(tools), None);
+        assert!(tool_choice.is_none());
+        let tools = additional_tools.expect("should have tools");
+        assert_eq!(tools.len(), 2);
+        match &tools[0] {
+            Tool::Function(ft) => {
+                assert_eq!(ft.name, "get_weather");
+                assert_eq!(ft.description, "Get weather info");
+            }
+            other => panic!("Expected Function tool, got {other:?}"),
+        }
+        match &tools[1] {
+            Tool::Function(ft) => {
+                assert_eq!(ft.name, "search");
+                assert_eq!(ft.description, "");
+            }
+            other => panic!("Expected Function tool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_convert_anthropic_tool_choice_auto() {
+        let (choice, _) = convert_anthropic_tools(None, Some(AnthropicToolChoice::Auto));
+        assert_eq!(choice, Some(crate::tool::ToolChoice::Auto));
+    }
+
+    #[test]
+    fn test_convert_anthropic_tool_choice_any() {
+        let (choice, _) = convert_anthropic_tools(None, Some(AnthropicToolChoice::Any));
+        assert_eq!(choice, Some(crate::tool::ToolChoice::Required));
+    }
+
+    #[test]
+    fn test_convert_anthropic_tool_choice_specific() {
+        let (choice, _) = convert_anthropic_tools(
+            None,
+            Some(AnthropicToolChoice::Tool {
+                name: "get_weather".to_string(),
+            }),
+        );
+        assert_eq!(
+            choice,
+            Some(crate::tool::ToolChoice::Specific("get_weather".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_convert_anthropic_tool_choice_none() {
+        let (choice, _) = convert_anthropic_tools(None, Some(AnthropicToolChoice::None));
+        assert_eq!(choice, Some(crate::tool::ToolChoice::None));
+    }
+
+    // ========================================================================
+    // Response conversion (chat_content_to_anthropic_blocks)
+    // ========================================================================
+
+    #[test]
+    fn test_chat_content_to_anthropic_blocks_text() {
+        let content = vec![ContentBlockChatOutput::Text(Text {
+            text: "Hello, world!".to_string(),
+        })];
+        let blocks = chat_content_to_anthropic_blocks(content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0],
+            AnthropicResponseContentBlock::Text {
+                text: "Hello, world!".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn test_chat_content_to_anthropic_blocks_tool_call() {
+        let content = vec![ContentBlockChatOutput::ToolCall(
+            InferenceResponseToolCall {
+                id: "call_1".to_string(),
+                raw_name: "get_weather".to_string(),
+                raw_arguments: "{\"city\":\"Tokyo\"}".to_string(),
+                name: Some("get_weather".to_string()),
+                arguments: None,
+            },
+        )];
+        let blocks = chat_content_to_anthropic_blocks(content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0],
+            AnthropicResponseContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "get_weather".to_string(),
+                input: json!({"city": "Tokyo"}),
+            }
+        );
+    }
+
+    #[test]
+    fn test_chat_content_to_anthropic_blocks_thought() {
+        let content = vec![ContentBlockChatOutput::Thought(Thought {
+            text: Some("Reasoning...".to_string()),
+            signature: Some("sig_123".to_string()),
+            summary: None,
+            provider_type: None,
+            extra_data: None,
+        })];
+        let blocks = chat_content_to_anthropic_blocks(content);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(
+            blocks[0],
+            AnthropicResponseContentBlock::Thinking {
+                thinking: "Reasoning...".to_string(),
+                signature: Some("sig_123".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn test_chat_content_to_anthropic_blocks_mixed() {
+        let content = vec![
+            ContentBlockChatOutput::Thought(Thought {
+                text: Some("Thinking...".to_string()),
+                signature: None,
+                summary: None,
+                provider_type: None,
+                extra_data: None,
+            }),
+            ContentBlockChatOutput::Text(Text {
+                text: "Answer".to_string(),
+            }),
+            ContentBlockChatOutput::ToolCall(InferenceResponseToolCall {
+                id: "tc_1".to_string(),
+                raw_name: "search".to_string(),
+                raw_arguments: "{}".to_string(),
+                name: None,
+                arguments: None,
+            }),
+            ContentBlockChatOutput::Unknown(crate::inference::types::Unknown {
+                data: json!({"type": "redacted_thinking"}),
+                model_name: None,
+                provider_name: None,
+            }),
+        ];
+        let blocks = chat_content_to_anthropic_blocks(content);
+        // Unknown blocks are skipped
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(
+            blocks[0],
+            AnthropicResponseContentBlock::Thinking { .. }
+        ));
+        assert!(matches!(
+            blocks[1],
+            AnthropicResponseContentBlock::Text { .. }
+        ));
+        assert!(matches!(
+            blocks[2],
+            AnthropicResponseContentBlock::ToolUse { .. }
+        ));
+    }
+
+    #[test]
+    fn test_chat_content_to_anthropic_blocks_empty() {
+        let content = vec![];
+        let blocks = chat_content_to_anthropic_blocks(content);
+        assert!(blocks.is_empty());
+    }
+
+    #[test]
+    fn test_chat_content_to_anthropic_blocks_invalid_json_arguments() {
+        // When raw_arguments is not valid JSON, it should fall back to a string value
+        let content = vec![ContentBlockChatOutput::ToolCall(
+            InferenceResponseToolCall {
+                id: "call_1".to_string(),
+                raw_name: "test".to_string(),
+                raw_arguments: "not json".to_string(),
+                name: None,
+                arguments: None,
+            },
+        )];
+        let blocks = chat_content_to_anthropic_blocks(content);
+        assert_eq!(
+            blocks[0],
+            AnthropicResponseContentBlock::ToolUse {
+                id: "call_1".to_string(),
+                name: "test".to_string(),
+                input: json!("not json"),
+            }
+        );
+    }
+
+    // ========================================================================
+    // Request deserialization
+    // ========================================================================
+
+    #[test]
+    fn test_deserialize_anthropic_params_minimal() {
+        let json = json!({
+            "model": "tensorzero::function_name::my_func",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        let params: AnthropicMessagesParams =
+            serde_json::from_value(json).expect("should deserialize");
+        assert_eq!(params.model, "tensorzero::function_name::my_func");
+        assert_eq!(params.max_tokens, 1024);
+        assert_eq!(params.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialize_anthropic_params_full() {
+        let json = json!({
+            "model": "tensorzero::model_name::anthropic::claude-sonnet-4-6",
+            "max_tokens": 4096,
+            "system": "You are helpful.",
+            "stream": true,
+            "temperature": 0.8,
+            "top_p": 0.95,
+            "top_k": 40,
+            "stop_sequences": ["END", "STOP"],
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+                {"role": "user", "content": "How are you?"}
+            ],
+            "tensorzero::variant_name": "v1",
+            "tensorzero::dryrun": true,
+            "tensorzero::tags": {"env": "test"}
+        });
+        let params: AnthropicMessagesParams =
+            serde_json::from_value(json).expect("should deserialize");
+        assert_eq!(params.temperature, Some(0.8));
+        assert_eq!(params.top_k, Some(40));
+        assert_eq!(params.stream, Some(true));
+        assert_eq!(
+            params.stop_sequences,
+            Some(vec!["END".into(), "STOP".into()])
+        );
+        assert_eq!(params.messages.len(), 3);
+        assert_eq!(params.tensorzero_variant_name.as_deref(), Some("v1"));
+        assert_eq!(params.tensorzero_dryrun, Some(true));
+        assert_eq!(
+            params.tensorzero_tags.get("env").map(String::as_str),
+            Some("test")
+        );
+    }
+
+    #[test]
+    fn test_deserialize_anthropic_content_blocks() {
+        let json = json!({
+            "model": "tensorzero::function_name::f",
+            "max_tokens": 100,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Describe this image"},
+                    {"type": "tool_result", "tool_use_id": "tu_1", "content": "result text"}
+                ]
+            }]
+        });
+        let params: AnthropicMessagesParams =
+            serde_json::from_value(json).expect("should deserialize");
+        match &params.messages[0].content {
+            AnthropicMessageContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 2);
+            }
+            other => panic!("Expected Blocks, got {other:?}"),
+        }
+    }
+
+    // ========================================================================
+    // Response serialization
+    // ========================================================================
+
+    #[test]
+    fn test_anthropic_response_serialization() {
+        let response = AnthropicMessagesResponse {
+            id: "msg_123".to_string(),
+            response_type: "message".to_string(),
+            role: "assistant".to_string(),
+            content: vec![AnthropicResponseContentBlock::Text {
+                text: "Hello!".to_string(),
+            }],
+            model: "tensorzero::function_name::test::variant_name::v1".to_string(),
+            stop_reason: Some(AnthropicStopReason::EndTurn),
+            stop_sequence: None,
+            usage: AnthropicUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_creation_input_tokens: None,
+                cache_read_input_tokens: None,
+                tensorzero_cost: None,
+            },
+            tensorzero_episode_id: Some("ep_456".to_string()),
+            tensorzero_raw_usage: None,
+            tensorzero_original_response: None,
+            tensorzero_raw_response: None,
+        };
+        let json = serde_json::to_value(&response).expect("should serialize");
+        assert_eq!(json["type"], "message");
+        assert_eq!(json["role"], "assistant");
+        assert_eq!(json["content"][0]["type"], "text");
+        assert_eq!(json["content"][0]["text"], "Hello!");
+        assert_eq!(json["stop_reason"], "end_turn");
+        assert_eq!(json["usage"]["input_tokens"], 10);
+        assert_eq!(json["usage"]["output_tokens"], 5);
+        assert_eq!(json["tensorzero_episode_id"], "ep_456");
+        // None fields should be omitted
+        assert!(json.get("tensorzero_raw_usage").is_none());
+        assert!(json.get("tensorzero_original_response").is_none());
     }
 }

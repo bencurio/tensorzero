@@ -491,3 +491,387 @@ fn convert_chunk_to_anthropic_events(
 
     events
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::endpoints::inference::{ChatInferenceResponseChunk, JsonInferenceResponseChunk};
+    use crate::inference::types::TextChunk;
+    use crate::inference::types::usage::Usage;
+    use crate::tool::ToolCallChunk;
+    use uuid::Uuid;
+
+    fn make_chat_chunk(
+        content: Vec<ContentBlockChunk>,
+        usage: Option<Usage>,
+        finish_reason: Option<FinishReason>,
+    ) -> InferenceResponseChunk {
+        InferenceResponseChunk::Chat(ChatInferenceResponseChunk {
+            inference_id: Uuid::now_v7(),
+            episode_id: Uuid::now_v7(),
+            variant_name: "test_variant".to_string(),
+            content,
+            usage,
+            raw_usage: None,
+            finish_reason,
+            original_chunk: None,
+            raw_chunk: None,
+            raw_response: None,
+            aggregated_response: None,
+        })
+    }
+
+    fn make_json_chunk(
+        raw: &str,
+        usage: Option<Usage>,
+        finish_reason: Option<FinishReason>,
+    ) -> InferenceResponseChunk {
+        InferenceResponseChunk::Json(JsonInferenceResponseChunk {
+            inference_id: Uuid::now_v7(),
+            episode_id: Uuid::now_v7(),
+            variant_name: "test_variant".to_string(),
+            raw: raw.to_string(),
+            usage,
+            raw_usage: None,
+            finish_reason,
+            original_chunk: None,
+            raw_chunk: None,
+            raw_response: None,
+            aggregated_response: None,
+        })
+    }
+
+    // ========================================================================
+    // First chunk emits message_start
+    // ========================================================================
+
+    #[test]
+    fn test_first_chat_chunk_emits_message_start() {
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::Text(TextChunk {
+                id: "t1".to_string(),
+                text: "Hello".to_string(),
+            })],
+            None,
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "prefix::", true);
+
+        // Should have: message_start, content_block_start, content_block_delta
+        assert!(
+            events.len() >= 3,
+            "Expected at least 3 events, got {}",
+            events.len()
+        );
+        assert_eq!(events[0].0, "message_start");
+        assert_eq!(events[1].0, "content_block_start");
+        assert_eq!(events[2].0, "content_block_delta");
+    }
+
+    #[test]
+    fn test_subsequent_chunk_no_message_start() {
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::Text(TextChunk {
+                id: "t1".to_string(),
+                text: "world".to_string(),
+            })],
+            None,
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        // Simulate that t1 was already started
+        state.active_blocks.insert("t1".to_string(), 0);
+        state.content_block_index = 1;
+
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "prefix::", false);
+
+        // Should only have content_block_delta (no message_start, no content_block_start)
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "content_block_delta");
+    }
+
+    // ========================================================================
+    // Text content block tracking
+    // ========================================================================
+
+    #[test]
+    fn test_new_text_block_emits_start_and_delta() {
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::Text(TextChunk {
+                id: "text_1".to_string(),
+                text: "Hi".to_string(),
+            })],
+            None,
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, "content_block_start");
+        assert_eq!(events[1].0, "content_block_delta");
+
+        // Verify the delta contains the text
+        let delta_data = &events[1].1;
+        assert_eq!(delta_data["delta"]["text"], "Hi");
+        assert_eq!(delta_data["delta"]["type"], "text_delta");
+    }
+
+    #[test]
+    fn test_continuing_text_block_emits_only_delta() {
+        let mut state = AnthropicStreamingState::default();
+        state.active_blocks.insert("text_1".to_string(), 0);
+        state.content_block_index = 1;
+
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::Text(TextChunk {
+                id: "text_1".to_string(),
+                text: " there".to_string(),
+            })],
+            None,
+            None,
+        );
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "content_block_delta");
+        assert_eq!(events[0].1["index"], 0);
+    }
+
+    // ========================================================================
+    // Tool call chunks
+    // ========================================================================
+
+    #[test]
+    fn test_tool_call_chunk_emits_start_and_delta() {
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::ToolCall(ToolCallChunk {
+                id: "tc_1".to_string(),
+                raw_name: Some("get_weather".to_string()),
+                raw_arguments: "{\"city\":".to_string(),
+            })],
+            None,
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, "content_block_start");
+        assert_eq!(events[0].1["content_block"]["type"], "tool_use");
+        assert_eq!(events[0].1["content_block"]["name"], "get_weather");
+
+        assert_eq!(events[1].0, "content_block_delta");
+        assert_eq!(events[1].1["delta"]["type"], "input_json_delta");
+        assert_eq!(events[1].1["delta"]["partial_json"], "{\"city\":");
+    }
+
+    #[test]
+    fn test_tool_call_chunk_continuation() {
+        let mut state = AnthropicStreamingState::default();
+        state.active_blocks.insert("tc_1".to_string(), 0);
+        state.content_block_index = 1;
+
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::ToolCall(ToolCallChunk {
+                id: "tc_1".to_string(),
+                raw_name: None,
+                raw_arguments: "\"Tokyo\"}".to_string(),
+            })],
+            None,
+            None,
+        );
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "content_block_delta");
+        assert_eq!(events[0].1["delta"]["partial_json"], "\"Tokyo\"}");
+    }
+
+    // ========================================================================
+    // Thinking chunks
+    // ========================================================================
+
+    #[test]
+    fn test_thinking_chunk_emits_start_and_delta() {
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::Thought(
+                crate::inference::types::streams::ThoughtChunk {
+                    id: "th_1".to_string(),
+                    text: Some("Let me think...".to_string()),
+                    signature: None,
+                    summary_id: None,
+                    summary_text: None,
+                    provider_type: None,
+                    extra_data: None,
+                },
+            )],
+            None,
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, "content_block_start");
+        assert_eq!(events[0].1["content_block"]["type"], "thinking");
+
+        assert_eq!(events[1].0, "content_block_delta");
+        assert_eq!(events[1].1["delta"]["type"], "thinking_delta");
+        assert_eq!(events[1].1["delta"]["thinking"], "Let me think...");
+    }
+
+    // ========================================================================
+    // Finish reason emits content_block_stop
+    // ========================================================================
+
+    #[test]
+    fn test_finish_reason_emits_content_block_stop() {
+        let mut state = AnthropicStreamingState::default();
+        state.active_blocks.insert("t1".to_string(), 0);
+        state.active_blocks.insert("tc1".to_string(), 1);
+        state.content_block_index = 2;
+
+        let chunk = make_chat_chunk(vec![], None, Some(FinishReason::Stop));
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        // Should emit content_block_stop for each active block
+        let stop_events: Vec<_> = events
+            .iter()
+            .filter(|(t, _, _)| t == "content_block_stop")
+            .collect();
+        assert_eq!(stop_events.len(), 2, "should stop both active blocks");
+
+        // State should be cleared
+        assert!(state.active_blocks.is_empty());
+    }
+
+    // ========================================================================
+    // Usage tracking
+    // ========================================================================
+
+    #[test]
+    fn test_output_tokens_tracked_in_state() {
+        let chunk = make_chat_chunk(
+            vec![],
+            Some(Usage {
+                input_tokens: Some(10),
+                output_tokens: Some(42),
+                provider_cache_read_input_tokens: None,
+                provider_cache_write_input_tokens: None,
+                cost: None,
+            }),
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(state.output_tokens, 42);
+    }
+
+    // ========================================================================
+    // JSON chunk handling
+    // ========================================================================
+
+    #[test]
+    fn test_json_first_chunk_emits_message_start_and_content() {
+        let chunk = make_json_chunk("{\"key\":", None, None);
+        let mut state = AnthropicStreamingState::default();
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", true);
+
+        // message_start + content_block_start + content_block_delta
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].0, "message_start");
+        assert_eq!(events[1].0, "content_block_start");
+        assert_eq!(events[2].0, "content_block_delta");
+        assert_eq!(events[2].1["delta"]["text"], "{\"key\":");
+    }
+
+    #[test]
+    fn test_json_subsequent_chunk_only_delta() {
+        let mut state = AnthropicStreamingState::default();
+        state.has_started_content = true;
+
+        let chunk = make_json_chunk("\"value\"}", None, None);
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, "content_block_delta");
+    }
+
+    #[test]
+    fn test_json_chunk_with_finish_reason() {
+        let mut state = AnthropicStreamingState::default();
+        state.has_started_content = true;
+
+        let chunk = make_json_chunk("}", None, Some(FinishReason::Stop));
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        // delta + content_block_stop
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, "content_block_delta");
+        assert_eq!(events[1].0, "content_block_stop");
+        assert_eq!(events[1].2, Some(FinishReason::Stop));
+    }
+
+    // ========================================================================
+    // Multiple content blocks with correct indices
+    // ========================================================================
+
+    #[test]
+    fn test_multiple_content_blocks_assigned_sequential_indices() {
+        let mut state = AnthropicStreamingState::default();
+
+        // First block: text
+        let chunk1 = make_chat_chunk(
+            vec![ContentBlockChunk::Text(TextChunk {
+                id: "t1".to_string(),
+                text: "Hi".to_string(),
+            })],
+            None,
+            None,
+        );
+        let events1 = convert_chunk_to_anthropic_events(chunk1, &mut state, "p::", false);
+        assert_eq!(events1[0].1["index"], 0); // content_block_start index=0
+
+        // Second block: tool_call
+        let chunk2 = make_chat_chunk(
+            vec![ContentBlockChunk::ToolCall(ToolCallChunk {
+                id: "tc1".to_string(),
+                raw_name: Some("search".to_string()),
+                raw_arguments: "{}".to_string(),
+            })],
+            None,
+            None,
+        );
+        let events2 = convert_chunk_to_anthropic_events(chunk2, &mut state, "p::", false);
+        assert_eq!(events2[0].1["index"], 1); // content_block_start index=1
+
+        assert_eq!(state.content_block_index, 2);
+    }
+
+    // ========================================================================
+    // Unknown chunks are skipped
+    // ========================================================================
+
+    #[test]
+    fn test_unknown_chunk_skipped() {
+        let chunk = make_chat_chunk(
+            vec![ContentBlockChunk::Unknown(
+                crate::inference::types::streams::UnknownChunk {
+                    id: "u1".to_string(),
+                    data: serde_json::json!({"type": "redacted_thinking"}),
+                    model_name: None,
+                    provider_name: None,
+                },
+            )],
+            None,
+            None,
+        );
+        let mut state = AnthropicStreamingState::default();
+        let events = convert_chunk_to_anthropic_events(chunk, &mut state, "p::", false);
+
+        assert!(events.is_empty(), "unknown chunks should produce no events");
+    }
+}
